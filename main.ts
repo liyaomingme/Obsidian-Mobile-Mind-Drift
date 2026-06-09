@@ -1,6 +1,6 @@
 import { App, ItemView, Plugin, WorkspaceLeaf, Modal, TFile, setIcon } from 'obsidian';
 
-const VIEW_TYPE_TOPOLOGY = "knowledge-topology-view";
+const VIEW_TYPE_STATS_HEATMAP_MOBILE = "mobile-stats-heatmap-view";
 
 const STOP_WORDS = new Set([
     'the', 'and', 'for', 'that', 'this', 'with', 'from', 'https', 'com', 'org', 
@@ -21,11 +21,10 @@ interface SphereNode {
     zRatio: number;
     baseFontSize: number;
     baseWeight: string;
-    renderState: string;
     filePaths: Set<string>;
 }
 
-class WordSphereEngine {
+class WordSphereMobileEngine {
     container: HTMLElement;
     canvas: HTMLCanvasElement;
     ctx: CanvasRenderingContext2D;
@@ -37,41 +36,33 @@ class WordSphereEngine {
     containerScale: number = 1; 
 
     isDragging = false;
-    hoveredTag: SphereNode | null = null; 
-    previousMouseX = 0; 
-    previousMouseY = 0;
-    canvasMouseX = 0; 
-    canvasMouseY = 0;
+    previousTouchX = 0; 
+    previousTouchY = 0;
     
     velocityX = 0.002; 
     velocityY = 0.002;
-    targetMinSpeed = 0.0012; 
-    friction = 0.96; 
+    targetMinSpeed = 0.0015; 
+    friction = 0.95; 
 
     animationFrameId: number = 0;
     isActive = true;
     resizeObserver: any; 
 
-    // --- 桌面端鼠标交互 ---
-    private onMouseMove = (e: MouseEvent) => {
-        const rect = this.container.getBoundingClientRect();
-        this.canvasMouseX = e.clientX - rect.left - rect.width / 2;
-        this.canvasMouseY = e.clientY - rect.top - rect.height / 2;
-
+    private onTouchMove = (e: TouchEvent) => {
         if (!this.isDragging) return;
-        const deltaX = e.clientX - this.previousMouseX;
-        const deltaY = e.clientY - this.previousMouseY;
-        this.previousMouseX = e.clientX;
-        this.previousMouseY = e.clientY;
+        const touch = e.touches[0];
+        const deltaX = touch.clientX - this.previousTouchX;
+        const deltaY = touch.clientY - this.previousTouchY;
+        this.previousTouchX = touch.clientX;
+        this.previousTouchY = touch.clientY;
         
-        this.velocityY = this.velocityY * 0.6 + (deltaX * 0.008) * 0.4; 
-        this.velocityX = this.velocityX * 0.6 + (-deltaY * 0.008) * 0.4; 
+        this.velocityY = this.velocityY * 0.6 + (deltaX * 0.012) * 0.4; 
+        this.velocityX = this.velocityX * 0.6 + (-deltaY * 0.012) * 0.4; 
     };
 
-    private onMouseUp = () => {
+    private onTouchEnd = () => {
         if (this.isDragging) {
             this.isDragging = false;
-            this.container.style.cursor = 'default';
         }
     };
 
@@ -94,8 +85,7 @@ class WordSphereEngine {
         this.ctx = context;
 
         this.handleResize();
-        this.setupMouseListeners();
-        this.setupTouchListeners(); // 激活手机端触控
+        this.setupTouchListeners();
 
         // @ts-ignore
         this.resizeObserver = new ResizeObserver(() => this.handleResize());
@@ -106,19 +96,22 @@ class WordSphereEngine {
         const rect = this.container.getBoundingClientRect();
         if (rect.width === 0 || rect.height === 0) return;
         
-        // 手机端边距适配
-        const safeRadiusWidth = (rect.width / 2) - 15; 
-        const safeRadiusHeight = (rect.height / 2) - 15;
+        const safeRadiusWidth = (rect.width / 2) - 20; 
+        const safeRadiusHeight = (rect.height / 2) - 20;
         let newRadius = Math.min(safeRadiusWidth, safeRadiusHeight);
-        newRadius = Math.max(newRadius, 25); 
+        newRadius = Math.max(newRadius, 40); 
 
-        this.containerScale = Math.max(0.4, Math.min(newRadius / 80, 1.2));
+        this.containerScale = Math.max(0.5, Math.min(newRadius / 80, 1.2));
 
         if (this.radius > 0 && this.tags.length > 0 && this.radius !== newRadius) {
             const scaleFactor = newRadius / this.radius;
             this.tags.forEach(tag => {
-                tag.lx *= scaleFactor; tag.ly *= scaleFactor; tag.lz *= scaleFactor;
-                tag.rx *= scaleFactor; tag.ry *= scaleFactor; tag.rz *= scaleFactor;
+                tag.lx *= scaleFactor;
+                tag.ly *= scaleFactor;
+                tag.lz *= scaleFactor;
+                tag.rx *= scaleFactor;
+                tag.ry *= scaleFactor;
+                tag.rz *= scaleFactor;
             });
         }
         
@@ -136,7 +129,6 @@ class WordSphereEngine {
         tagEl.style.position = 'absolute';
         tagEl.style.left = '50%';
         tagEl.style.top = '50%';
-        tagEl.style.cursor = 'pointer';
         tagEl.style.willChange = 'transform, opacity, filter, color';
         tagEl.style.zIndex = '10'; 
         
@@ -152,54 +144,45 @@ class WordSphereEngine {
         const z = Math.sin(phi) * r * this.radius;
 
         this.tags.push({
-            el: tagEl, lx: x, ly: cy, lz: z, rx: x, ry: cy, rz: z, 
-            vx: 0, vy: 0, vz: 0, currentScale: 1, zRatio: z / this.radius,
-            baseFontSize, baseWeight, renderState: 'normal', filePaths: filePaths
+            el: tagEl,
+            lx: x, ly: cy, lz: z,
+            rx: x, ry: cy, rz: z, 
+            vx: 0, vy: 0, vz: 0,
+            currentScale: 1, 
+            zRatio: z / this.radius,
+            baseFontSize,
+            baseWeight,
+            filePaths: filePaths
         });
         
         this.container.appendChild(tagEl);
     }
 
-    private setupMouseListeners() {
-        this.container.addEventListener('mousedown', (e) => {
-            this.isDragging = true;
-            this.previousMouseX = e.clientX;
-            this.previousMouseY = e.clientY;
-            this.container.style.cursor = 'grabbing';
-        });
-        document.addEventListener('mousemove', this.onMouseMove);
-        document.addEventListener('mouseup', this.onMouseUp);
-    }
-
-    // --- 手机端原生触控拦截引擎 ---
     private setupTouchListeners() {
         this.container.addEventListener('touchstart', (e) => {
-            if (e.touches.length > 0) {
-                this.isDragging = true;
-                this.previousMouseX = e.touches[0].clientX;
-                this.previousMouseY = e.touches[0].clientY;
-            }
+            this.isDragging = true;
+            this.previousTouchX = e.touches[0].clientX;
+            this.previousTouchY = e.touches[0].clientY;
         }, { passive: true });
 
-        this.container.addEventListener('touchmove', (e) => {
-            if (!this.isDragging || e.touches.length === 0) return;
-            // 绝对锁死屏幕滚动，只允许 3D 星空转动
-            e.preventDefault(); 
-            const currentX = e.touches[0].clientX;
-            const currentY = e.touches[0].clientY;
-            const deltaX = currentX - this.previousMouseX;
-            const deltaY = currentY - this.previousMouseY;
-            this.previousMouseX = currentX;
-            this.previousMouseY = currentY;
-
-            // 手机端滑动灵敏度优化
+        document.addEventListener('touchmove', this.onTouchMove, { passive: true });
+        document.addEventListener('touchend', this.onTouchEnd);
+        
+        this.container.addEventListener('mousedown', (e) => {
+            this.isDragging = true;
+            this.previousTouchX = e.clientX;
+            this.previousTouchY = e.clientY;
+        });
+        document.addEventListener('mousemove', (e: MouseEvent) => {
+            if (!this.isDragging) return;
+            const deltaX = e.clientX - this.previousTouchX;
+            const deltaY = e.clientY - this.previousTouchY;
+            this.previousTouchX = e.clientX;
+            this.previousTouchY = e.clientY;
             this.velocityY = this.velocityY * 0.6 + (deltaX * 0.012) * 0.4; 
             this.velocityX = this.velocityX * 0.6 + (-deltaY * 0.012) * 0.4; 
-        }, { passive: false });
-
-        this.container.addEventListener('touchend', () => {
-            this.isDragging = false;
         });
+        document.addEventListener('mouseup', this.onTouchEnd);
     }
 
     startAnimation() {
@@ -232,7 +215,6 @@ class WordSphereEngine {
             const cx = this.width / 2;
             const cy = this.height / 2;
 
-            const colorAccent = getComputedColor('--interactive-accent', '#007AFF');
             const colorNormal = getComputedColor('--text-normal', '#333333');
             const neutralLineColor = '128, 128, 128'; 
 
@@ -242,50 +224,15 @@ class WordSphereEngine {
                 const y1 = tag.ly * Math.cos(this.velocityX) - z1 * Math.sin(this.velocityX);
                 const z2 = z1 * Math.cos(this.velocityX) + tag.ly * Math.sin(this.velocityX);
                 tag.lx = x1; tag.ly = y1; tag.lz = z2;
-            });
-
-            this.tags.forEach(tag => {
-                let targetX = tag.lx; let targetY = tag.ly; let targetZ = tag.lz;
-
-                if (this.hoveredTag === tag) {
-                    targetX = this.canvasMouseX; targetY = this.canvasMouseY; targetZ = this.radius; 
-                } else if (this.hoveredTag) {
-                    const dx = tag.lx - this.hoveredTag.rx; 
-                    const dy = tag.ly - this.hoveredTag.ry;
-                    const dist = Math.sqrt(dx*dx + dy*dy);
-                    const avoidRadius = Math.max(35, this.radius * 1.1); 
-
-                    if (dist > 0 && dist < avoidRadius) {
-                        const force = Math.pow((avoidRadius - dist) / avoidRadius, 2); 
-                        const pushIntensityX = this.radius * 1.3;
-                        const pushIntensityZ = this.radius * 0.6;
-                        targetX += (dx / dist) * force * pushIntensityX;
-                        targetY += (dy / dist) * force * pushIntensityX;
-                        targetZ -= force * pushIntensityZ; 
-                    }
-                }
-
-                const stiffness = 0.10; const damping = 0.72; 
-                
-                tag.vx += (targetX - tag.rx) * stiffness; tag.vy += (targetY - tag.ry) * stiffness; tag.vz += (targetZ - tag.rz) * stiffness;
-                tag.vx *= damping; tag.vy *= damping; tag.vz *= damping;
-                tag.rx += tag.vx; tag.ry += tag.vy; tag.rz += tag.vz;
-                tag.zRatio = tag.rz / this.radius;
-
-                let targetScale = 1;
-                if (this.hoveredTag) {
-                    if (tag.renderState === 'focused') targetScale = 1.25;
-                    else if (tag.renderState === 'co-occurring') targetScale = 1;
-                    else targetScale = 0.85; 
-                }
-                tag.currentScale += (targetScale - tag.currentScale) * 0.15;
+                tag.rx = x1; tag.ry = y1; tag.rz = z2;
+                tag.zRatio = z2 / this.radius;
             });
 
             const renderList = [...this.tags].sort((a, b) => a.rz - b.rz);
 
             renderList.forEach(item => {
                 if (item.rz >= 0) return;
-                this.drawConnectionLine(cx, cy, item, neutralLineColor, colorNormal, colorAccent);
+                this.drawConnectionLine(cx, cy, item, neutralLineColor);
             });
 
             this.ctx.beginPath();
@@ -295,20 +242,20 @@ class WordSphereEngine {
 
             renderList.forEach(item => {
                 if (item.rz < 0) return;
-                this.drawConnectionLine(cx, cy, item, neutralLineColor, colorNormal, colorAccent);
+                this.drawConnectionLine(cx, cy, item, neutralLineColor);
             });
 
             renderList.forEach(item => {
                 const tag = item;
+                
                 let baseOpacity = 0; let blur = 0; let color = 'var(--text-faint)';
-                if (item.zRatio > 0.4) { baseOpacity = 0.95; blur = 0; color = 'var(--text-normal)'; } 
-                else if (item.zRatio > 0) { baseOpacity = 0.5 + 0.45 * (item.zRatio / 0.4); blur = 0; color = 'var(--text-muted)'; } 
-                else { baseOpacity = 0.12 + 0.38 * ((item.zRatio + 1) / 1); blur = Math.min(2.5, Math.abs(item.zRatio) * 2.5); color = 'var(--text-faint)'; }
-
-                if (this.hoveredTag) {
-                    if (tag.renderState === 'focused') { baseOpacity = 1; blur = 0; } 
-                    else if (tag.renderState === 'co-occurring') { color = 'var(--interactive-accent)'; blur = 0; baseOpacity = Math.max(baseOpacity, 0.6); } 
-                    else { blur = 4; baseOpacity = 0.05; }
+                if (item.zRatio > 0.4) {
+                    baseOpacity = 0.95; blur = 0; color = 'var(--text-normal)'; 
+                } else if (item.zRatio > 0) {
+                    baseOpacity = 0.5 + 0.45 * (item.zRatio / 0.4); blur = 0; color = 'var(--text-muted)'; 
+                } else {
+                    baseOpacity = 0.15 + 0.35 * ((item.zRatio + 1) / 1); 
+                    blur = Math.min(2.0, Math.abs(item.zRatio) * 2.0); color = 'var(--text-faint)';
                 }
 
                 const depthScale = 0.65 + 0.5 * ((this.radius + tag.rz) / (2 * this.radius)); 
@@ -328,29 +275,29 @@ class WordSphereEngine {
         animate();
     }
 
-    private drawConnectionLine(cx: number, cy: number, item: SphereNode, neutralRGB: string, normalColor: string, accentColor: string) {
-        let depthOpacity = 0; let depthWidth = 0.4;
-        if (item.zRatio > 0) { depthOpacity = 0.04 + 0.15 * item.zRatio; depthWidth = 0.4 + 0.5 * item.zRatio; } 
-        else { depthOpacity = 0.04 * (1 - Math.abs(item.zRatio)); depthWidth = 0.4; }
+    private drawConnectionLine(cx: number, cy: number, item: SphereNode, neutralRGB: string) {
+        let depthOpacity = 0;
+        let depthWidth = 0.4;
+        
+        if (item.zRatio > 0) {
+            depthOpacity = 0.06 + 0.15 * item.zRatio; 
+            depthWidth = 0.4 + 0.5 * item.zRatio;
+        } else {
+            depthOpacity = 0.06 * (1 - Math.abs(item.zRatio)); 
+            depthWidth = 0.4;
+        }
 
         depthWidth *= this.containerScale;
+
         if (depthOpacity <= 0) return;
 
         this.ctx.save();
         this.ctx.beginPath();
         this.ctx.moveTo(cx, cy);
         this.ctx.lineTo(cx + item.rx, cy + item.ry);
-        this.ctx.lineWidth = Math.max(0.1, depthWidth);
-
-        if (this.hoveredTag) {
-            if (item.renderState === 'focused') { this.ctx.strokeStyle = `rgb(${neutralRGB})`; this.ctx.globalAlpha = depthOpacity; } 
-            else if (item.renderState === 'co-occurring') { this.ctx.strokeStyle = accentColor; this.ctx.globalAlpha = depthOpacity * 1.2; } 
-            else { this.ctx.globalAlpha = 0; }
-        } else {
-            this.ctx.strokeStyle = `rgb(${neutralRGB})`; this.ctx.globalAlpha = depthOpacity;
-        }
-
-        if (this.ctx.globalAlpha > 0) this.ctx.stroke();
+        this.ctx.lineWidth = Math.max(0.2, depthWidth);
+        this.ctx.strokeStyle = `rgba(${neutralRGB}, ${depthOpacity})`;
+        this.ctx.stroke();
         this.ctx.restore();
     }
 
@@ -358,8 +305,8 @@ class WordSphereEngine {
         this.isActive = false;
         if (this.animationFrameId) cancelAnimationFrame(this.animationFrameId);
         if (this.resizeObserver) this.resizeObserver.disconnect();
-        document.removeEventListener('mousemove', this.onMouseMove);
-        document.removeEventListener('mouseup', this.onMouseUp);
+        document.removeEventListener('touchmove', this.onTouchMove);
+        document.removeEventListener('touchend', this.onTouchEnd);
     }
 }
 
@@ -396,7 +343,9 @@ async function analyzeVaultData(app: App) {
 
             const isChinese = /[\u4e00-\u9fa5]/.test(w);
             if ((isChinese && w.length >= 2) || (!isChinese && w.length >= 3 && w.length <= 20)) {
-                if (!wordData.has(w)) wordData.set(w, { count: 0, files: new Set() });
+                if (!wordData.has(w)) {
+                    wordData.set(w, { count: 0, files: new Set() });
+                }
                 const entry = wordData.get(w)!;
                 entry.count++;
                 entry.files.add(file);
@@ -406,8 +355,7 @@ async function analyzeVaultData(app: App) {
 
     return Array.from(wordData.entries())
                 .sort((a, b) => b[1].count - a[1].count)
-                // 手机端将词汇量限制在 40 个，防止过于拥挤
-                .slice(0, 40) 
+                .slice(0, 45) 
                 .map(([word, data]) => ({ word, value: data.count, files: Array.from(data.files) }));
 }
 
@@ -417,12 +365,12 @@ class WordContextModal extends Modal {
 
     async onOpen() {
         const { contentEl } = this; contentEl.empty();
-        this.modalEl.style.cssText = 'max-width: 850px; width: 90vw; border-radius: 20px; padding: 24px; box-shadow: 0 16px 40px rgba(0,0,0,0.08);';
+        this.modalEl.style.cssText = 'max-width: 95vw; width: 95vw; border-radius: 16px; padding: 24px; box-shadow: 0 16px 40px rgba(0,0,0,0.08);';
 
         contentEl.createEl('h2', { text: `「${this.word}」`, attr: { style: 'margin: 0 0 10px 0; font-size: 1.5em; font-weight: 700; color: var(--interactive-accent); font-family: "SimSun", "STSong", "Songti SC", serif; letter-spacing: -0.5px;' } });
-        contentEl.createEl('p', { text: `在 ${this.files.length} 篇笔记的正文中被提及：`, attr: { style: 'margin: 0 0 24px 0; color: var(--text-muted); font-size: 0.9em;' } });
+        contentEl.createEl('p', { text: `在 ${this.files.length} 篇笔记中被提及：`, attr: { style: 'margin: 0 0 20px 0; color: var(--text-muted); font-size: 0.9em;' } });
 
-        const listContainer = contentEl.createDiv({ attr: { style: 'max-height: 50vh; overflow-y: auto; padding-right: 8px; display: flex; flex-direction: column; gap: 12px;' } });
+        const listContainer = contentEl.createDiv({ attr: { style: 'max-height: 60vh; overflow-y: auto; padding-right: 8px; display: flex; flex-direction: column; gap: 12px;' } });
 
         this.files.forEach(async (file) => {
             const content = await this.app.vault.cachedRead(file);
@@ -432,21 +380,21 @@ class WordContextModal extends Modal {
             const matches = rawContent.match(regex) || [];
 
             if (matches.length > 0) {
-                const card = listContainer.createDiv({ attr: { style: 'background: var(--background-primary); border: 1px solid var(--background-modifier-border); border-radius: 12px; padding: 12px; cursor: pointer;' } });
+                const card = listContainer.createDiv({ attr: { style: 'background: var(--background-primary); border: 1px solid var(--background-modifier-border); border-radius: 10px; padding: 14px; transition: all 0.2s ease;' } });
                 card.addEventListener('click', async () => { const leaf = this.app.workspace.getLeaf(false); await leaf.openFile(file); this.close(); });
 
-                const fileTitle = card.createEl('div', { attr: { style: 'font-weight: 600; font-size: 1em; margin-bottom: 8px; color: var(--text-normal); display: flex; align-items: center;' } });
+                const fileTitle = card.createEl('div', { attr: { style: 'font-weight: 700; font-size: 1em; margin-bottom: 10px; color: var(--text-normal); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; display: flex; align-items: center;' } });
                 const fileIconSpan = fileTitle.createEl('span', { attr: { style: 'margin-right: 6px; opacity: 0.7;' } });
                 setIcon(fileIconSpan, 'document'); fileTitle.appendChild(document.createTextNode(file.basename));
 
-                const displayMatches = matches.slice(0, 3);
+                const displayMatches = matches.slice(0, 2); 
                 for (let match of displayMatches) {
-                    const snippetDiv = card.createDiv({ attr: { style: 'font-size: 0.85em; color: var(--text-muted); line-height: 1.4; margin-bottom: 6px; background: var(--background-secondary); padding: 8px; border-radius: 8px;' } });
+                    const snippetDiv = card.createDiv({ attr: { style: 'font-size: 0.85em; color: var(--text-muted); line-height: 1.5; margin-bottom: 6px; background: var(--background-secondary); padding: 8px 10px; border-radius: 6px;' } });
                     const parts = match.split(new RegExp(`(${safeWord})`, 'gi'));
                     snippetDiv.appendChild(document.createTextNode('"...'));
                     parts.forEach(part => {
                         if (part.toLowerCase() === this.word.toLowerCase()) {
-                            snippetDiv.createEl('span', { text: part, attr: { style: 'color: var(--text-normal); background-color: var(--background-modifier-hover); padding: 1px 3px; border-radius: 4px; font-weight: 600; margin: 0 2px;' } });
+                            snippetDiv.createEl('span', { text: part, attr: { style: 'color: var(--text-normal); background-color: var(--background-modifier-hover); padding: 2px 4px; border-radius: 4px; font-weight: 600; margin: 0 2px;' } });
                         } else { snippetDiv.appendChild(document.createTextNode(part)); }
                     });
                     snippetDiv.appendChild(document.createTextNode('..."'));
@@ -457,45 +405,69 @@ class WordContextModal extends Modal {
     onClose() { this.contentEl.empty(); }
 }
 
-class DesktopStatsHeatmapView extends ItemView {
-    sphereEngine: WordSphereEngine | null = null;
+class MobileStatsHeatmapView extends ItemView {
+    sphereEngine: WordSphereMobileEngine | null = null;
     
     constructor(leaf: WorkspaceLeaf) { super(leaf); }
-    getViewType() { return VIEW_TYPE_TOPOLOGY; }
+    getViewType() { return VIEW_TYPE_STATS_HEATMAP_MOBILE; }
     getDisplayText() { return "拓扑网络"; }
     getIcon() { return "network"; } 
 
     async onOpen() {
         const container = this.containerEl.children[1]; container.empty();
-        container.addClass('stats-dashboard-container');
+        container.addClass('stats-heatmap-dashboard-container-mobile');
 
-        const headerDiv = container.createDiv({ cls: 'stats-header-row', attr: { title: '点击重新构建突触' } });
-        const titleDiv = headerDiv.createDiv({ attr: { style: 'display: flex; align-items: center; white-space: nowrap;' } });
-        const iconSpan = titleDiv.createEl('span', { attr: { style: 'width: 18px; height: 18px; color: var(--text-muted); margin-right: 8px; display: flex; align-items: center;' } });
-        setIcon(iconSpan, 'network'); 
-        const titleText = titleDiv.createEl("h2", { text: "拓扑网络", cls: 'stats-title' });
+        container.setAttr('style', `
+            padding: 8px; display: flex; flex-direction: column; height: 100%; overflow: hidden; 
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            -webkit-font-smoothing: antialiased; background-color: transparent;
+        `);
+
+        const headerDiv = container.createDiv({ 
+            attr: { 
+                style: 'display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; padding: 0 4px; flex-shrink: 0; opacity: 0.85;'
+            } 
+        });
         
-        const contentWrapper = container.createDiv({ cls: 'stats-content-wrapper' });
-        const panelContainer = contentWrapper.createDiv({ cls: 'panel-container' });
-        const heatmapDiv = panelContainer.createDiv({ cls: 'canvas-wrapper' });
+        const titleDiv = headerDiv.createDiv({
+            attr: { style: 'display: flex; align-items: center; white-space: nowrap;' }
+        });
+        const iconSpan = titleDiv.createEl('span', { attr: { style: 'width: 16px; height: 16px; color: var(--text-muted); margin-right: 8px; display: flex; align-items: center;' } });
+        setIcon(iconSpan, 'network'); 
+        
+        const titleText = titleDiv.createEl("span", { 
+            text: "拓扑网络", 
+            attr: { 
+                style: 'margin: 0; font-size: 13px; font-weight: 600; color: var(--text-muted); font-family: "SimSun", "STSong", "Songti SC", serif; letter-spacing: 0.5px;' 
+            } 
+        });
+        
+        const contentWrapper = container.createDiv({ attr: { style: 'display: flex; flex-direction: column; flex: 1; min-height: 0;' } });
+        
+        const heatmapDiv = contentWrapper.createDiv({ 
+            attr: { style: 'flex: 1; display: flex; justify-content: center; align-items: center; background-color: transparent; overflow: hidden; position: relative;' } 
+        });
 
         const renderData = async () => {
-            headerDiv.style.opacity = '0.5'; titleText.innerText = "星空构建中..."; headerDiv.style.pointerEvents = 'none';
+            headerDiv.style.opacity = '0.3';
+            titleText.innerText = "构建中...";
 
             if (this.sphereEngine) this.sphereEngine.destroy();
             heatmapDiv.empty();
             
             const heatmapWords = await analyzeVaultData(this.app);
             const maxWordCount = heatmapWords.length > 0 ? heatmapWords[0].value : 1;
-            const containerMinSide = Math.min(heatmapDiv.clientWidth || 250, heatmapDiv.clientHeight || 250);
-            const baseRadius = Math.max((containerMinSide / 2) * 0.8, 25); 
 
-            this.sphereEngine = new WordSphereEngine(heatmapDiv, baseRadius);
+            const containerMinSide = Math.min(heatmapDiv.clientWidth || 250, heatmapDiv.clientHeight || 250);
+            const baseRadius = Math.max((containerMinSide / 2) * 0.8, 40); 
+
+            this.sphereEngine = new WordSphereMobileEngine(heatmapDiv, baseRadius);
 
             heatmapWords.forEach(({word, value, files}) => {
                 const wordEl = document.createElement('div');
                 wordEl.innerText = word;
-                const fontSize = Math.max(12, Math.min(24, 12 + (value/maxWordCount)*12));
+                
+                const fontSize = Math.max(14, Math.min(28, 14 + (value/maxWordCount)*14));
                 const fontWeight = value > maxWordCount * 0.6 ? '700' : '400'; 
                 const filePaths = new Set(files.map(f => f.path));
 
@@ -503,22 +475,26 @@ class DesktopStatsHeatmapView extends ItemView {
                     font-family: "SimSun", "STSong", "Songti SC", serif;
                     font-size: ${fontSize}px;
                     font-weight: ${fontWeight};
-                    letter-spacing: -0.2px; padding: 4px; white-space: nowrap; user-select: none;
-                    transition: filter 0.2s, opacity 0.2s, color 0.2s; transform-origin: center center;
+                    letter-spacing: -0.2px;
+                    padding: 4px;
+                    white-space: nowrap;
+                    user-select: none;
+                    transition: filter 0.2s, opacity 0.2s, color 0.2s; 
+                    transform-origin: center center;
                 `);
                 
-                // 手机端手指轻点触发
-                wordEl.addEventListener('click', () => new WordContextModal(this.app, word, files).open());
-                // 处理手机端悬停的高亮效果
-                wordEl.addEventListener('touchstart', () => {
-                    this.sphereEngine!.hoveredTag = this.sphereEngine!.tags.find(t => t.el === wordEl) || null;
-                }, { passive: true });
-
+                wordEl.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    new WordContextModal(this.app, word, files).open()
+                });
+                
                 this.sphereEngine!.addTag(wordEl, fontSize, fontWeight, filePaths);
             });
 
             this.sphereEngine.startAnimation();
-            headerDiv.style.pointerEvents = 'auto'; titleText.innerText = "拓扑网络"; headerDiv.style.opacity = '1';
+
+            titleText.innerText = "拓扑网络";
+            headerDiv.style.opacity = '0.85';
         };
 
         headerDiv.addEventListener('click', renderData);
@@ -528,26 +504,28 @@ class DesktopStatsHeatmapView extends ItemView {
     async onClose() { if (this.sphereEngine) this.sphereEngine.destroy(); }
 }
 
-export default class TopologyPlugin extends Plugin {
+export default class MobileStatsPlugin extends Plugin {
     async onload() {
-        this.registerView(VIEW_TYPE_TOPOLOGY, (leaf) => new DesktopStatsHeatmapView(leaf));
+        this.registerView(VIEW_TYPE_STATS_HEATMAP_MOBILE, (leaf) => new MobileStatsHeatmapView(leaf));
+        
         this.addRibbonIcon('network', '打开拓扑网络', () => this.activateView());
-        this.addCommand({ id: 'open-typographic-insights', name: '打开拓扑网络', callback: () => this.activateView() });
+        this.addCommand({ id: 'open-mobile-insights', name: '打开移动端拓扑网络', callback: () => this.activateView() });
     }
-    async onunload() { this.app.workspace.detachLeavesOfType(VIEW_TYPE_TOPOLOGY); }
+    
+    async onunload() { this.app.workspace.detachLeavesOfType(VIEW_TYPE_STATS_HEATMAP_MOBILE); }
     
     async activateView() {
         const { workspace } = this.app;
-        let existingLeaves = workspace.getLeavesOfType(VIEW_TYPE_TOPOLOGY);
+        let existingLeaves = workspace.getLeavesOfType(VIEW_TYPE_STATS_HEATMAP_MOBILE);
         let leaf: WorkspaceLeaf;
         
         if (existingLeaves.length > 0) {
             leaf = existingLeaves[0];
         } else {
-            // 手机端友好适配：手机上直接新建一个覆盖 Tab
-            leaf = workspace.getLeaf('tab');
-            await leaf.setViewState({ type: VIEW_TYPE_TOPOLOGY, active: true });
+            leaf = workspace.getRightLeaf(false) || workspace.getLeaf(false);
+            await leaf.setViewState({ type: VIEW_TYPE_STATS_HEATMAP_MOBILE, active: true });
         }
+        
         workspace.revealLeaf(leaf);
     }
 }
