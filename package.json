@@ -1,18 +1,16 @@
 {
   "name": "mobile-wordcloud-trends",
-  "version": "1.0.0",
+  "version": "1.0.2",
   "description": "Mobile WordCloud Trends for Obsidian",
   "main": "main.js",
   "scripts": {
     "dev": "node esbuild.config.mjs",
-    "build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production"
+    "build": "node esbuild.config.mjs production"
   },
   "author": "Li Yaoming",
   "license": "MIT",
   "devDependencies": {
     "@types/node": "^16.11.29",
-    "@typescript-eslint/eslint-plugin": "5.29.0",
-    "@typescript-eslint/parser": "5.29.0",
     "builtin-modules": "3.3.0",
     "esbuild": "0.17.3",
     "obsidian": "latest",
