@@ -103,8 +103,11 @@ class WordSphereMobileEngine {
         this.handleResize();
         this.setupTouchListeners();
 
-        this.resizeObserver = new (window as any).ResizeObserver(() => this.handleResize());
-        this.resizeObserver.observe(this.container);
+        const RO = (window as any).ResizeObserver;
+        if (RO) {
+            this.resizeObserver = new RO(() => this.handleResize());
+            this.resizeObserver.observe(this.container);
+        }
     }
 
     private handleResize() {
@@ -335,8 +338,8 @@ async function analyzeVaultData(app: App) {
             .replace(/[^\u4e00-\u9fa5a-zA-Z]/g, ' '); 
 
         let segments: any[] = [];
-        const IntlAny = Intl as any;
-        if (IntlAny.Segmenter) {
+        const IntlAny = (window as any).Intl;
+        if (IntlAny && IntlAny.Segmenter) {
             const segmenter = new IntlAny.Segmenter('zh-CN', { granularity: 'word' });
             const iterator = segmenter.segment(cleanText);
             segments = (Array as any).from(iterator);
@@ -531,16 +534,16 @@ export default class MobileStatsPlugin extends Plugin {
         if (existingLeaves.length > 0) {
             leaf = existingLeaves[0];
         } else {
-            // 核心修复：移动端不支持上下切分，因此改为放在独立的右侧滑抽屉中
-            leaf = workspace.getRightLeaf(false);
-            if (!leaf) {
-                // 如果出现意外情况导致右侧不可用，兜底放在主屏幕
-                leaf = workspace.getLeaf(false);
+            // 终极安全移动端挂载逻辑：强制使用专门的右侧抽屉，绝不切分！
+            const rightLeaf = (workspace as any).getRightLeaf ? (workspace as any).getRightLeaf(false) : null;
+            if (rightLeaf) {
+                leaf = rightLeaf;
+            } else {
+                leaf = workspace.getLeaf(false); // 极端兜底，开新标签页
             }
             await leaf.setViewState({ type: VIEW_TYPE_STATS_HEATMAP_MOBILE, active: true });
         }
         
-        // 唤醒并展开右侧滑抽屉
         workspace.revealLeaf(leaf);
     }
 }
