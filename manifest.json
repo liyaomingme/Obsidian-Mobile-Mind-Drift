@@ -1,0 +1,10 @@
+{
+  "id": "obsidian-knowledge-topology",
+  "name": "Knowledge Topology",
+  "version": "1.0.0",
+  "minAppVersion": "1.0.0",
+  "description": "跨端支持的 3D 知识拓扑星空与洞察看板。",
+  "author": "Your Name",
+  "authorUrl": "https://github.com/你的GitHub用户名/obsidian-knowledge-topology",
+  "isDesktopOnly": false
+}
