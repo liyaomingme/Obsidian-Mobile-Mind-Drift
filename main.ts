@@ -38,7 +38,7 @@ class WordSphereMobileEngine {
     previousTouchX = 0; 
     previousTouchY = 0;
     
-    velocityX = 0.003; // 移动端稍微加快一点自转
+    velocityX = 0.003; 
     velocityY = 0.003;
     targetMinSpeed = 0.002; 
     friction = 0.95; 
@@ -49,7 +49,6 @@ class WordSphereMobileEngine {
 
     private onTouchMove = (e: TouchEvent) => {
         if (!this.isDragging) return;
-        // 核心：强行吞掉触摸事件，防止星系滑动触发外层文件树的滚动
         e.stopPropagation(); 
         
         const touch = e.touches[0];
@@ -167,13 +166,12 @@ class WordSphereMobileEngine {
             this.isDragging = true;
             this.previousTouchX = e.touches[0].clientX;
             this.previousTouchY = e.touches[0].clientY;
-            e.stopPropagation(); // 阻止滑动穿透到文件树
-        }, { passive: false }); // 设置 passive false 才能真正 stopPropagation
+            e.stopPropagation(); 
+        }, { passive: false }); 
 
         this.container.addEventListener('touchmove', this.onTouchMove, { passive: false });
         this.container.addEventListener('touchend', this.onTouchEnd);
         
-        // 保留鼠标适配
         this.container.addEventListener('mousedown', (e) => {
             this.isDragging = true;
             this.previousTouchX = e.clientX;
@@ -383,7 +381,7 @@ class WordContextModal extends Modal {
             const regex = new RegExp(`.{0,45}${safeWord}.{0,45}`, 'gi');
             const matches = rawContent.match(regex) || [];
 
-            if (if matches.length > 0) {
+            if (matches.length > 0) { // 彻底修复了这里的语法错误！
                 const card = listContainer.createDiv({ attr: { style: 'background: var(--background-primary); border: 1px solid var(--background-modifier-border); border-radius: 10px; padding: 14px; transition: all 0.2s ease;' } });
                 card.addEventListener('click', async () => { const leaf = this.app.workspace.getLeaf(false); await leaf.openFile(file); this.close(); });
 
@@ -414,17 +412,14 @@ export default class MobileStatsPlugin extends Plugin {
     injectedContainer: HTMLElement | null = null;
 
     async onload() {
-        // 核心修改：不再注册视图或点击按钮。插件加载时，直接潜伏等待文件树渲染。
         this.app.workspace.onLayoutReady(() => {
             this.injectIntoFileExplorer();
         });
 
-        // 监听侧边栏展开，每次展开都尝试确保星系活着
         this.registerEvent(this.app.workspace.on('layout-change', () => {
             this.injectIntoFileExplorer();
         }));
         
-        // 手动重构按钮依然保留，方便刷新
         this.addCommand({ id: 'rebuild-mobile-insights', name: '重构文件树拓扑网络', callback: () => this.injectIntoFileExplorer(true) });
     }
     
@@ -433,32 +428,25 @@ export default class MobileStatsPlugin extends Plugin {
         if (this.injectedContainer) this.injectedContainer.remove();
     }
     
-    // --- 黑客级寄生注入核心 ---
     async injectIntoFileExplorer(forceRebuild = false) {
-        // 1. 扫描寻找原生的左侧边栏中的文件树容器
         const fileExplorerLeaves = this.app.workspace.getLeavesOfType('file-explorer');
-        if (fileExplorerLeaves.length === 0) return; // 文件树还没准备好
+        if (fileExplorerLeaves.length === 0) return; 
 
         const fileExplorerContainer = fileExplorerLeaves[0].view.containerEl;
         
-        // 2. 找到最内部的滚动区域 nav-files-container
         const navContainer = fileExplorerContainer.querySelector('.nav-files-container');
         if (!navContainer) return;
 
-        // 如果已经注入过了，并且不强制重建，则保持原样
         if (this.injectedContainer && this.injectedContainer.parentElement === navContainer && !forceRebuild) {
             return;
         }
 
-        // 清理旧尸体
         if (this.sphereEngine) this.sphereEngine.destroy();
         if (this.injectedContainer) this.injectedContainer.remove();
 
-        // 3. 创建寄生容器
         this.injectedContainer = document.createElement('div');
         this.injectedContainer.className = 'mobile-parasitic-heatmap';
         
-        // CSS 黑魔法：强行把文件树底下的空间撑开，并将其吸附在最底部
         this.injectedContainer.setAttribute('style', `
             width: 100%;
             height: 280px; 
@@ -468,10 +456,9 @@ export default class MobileStatsPlugin extends Plugin {
             border-top: 1px solid var(--background-modifier-border);
             position: relative;
             background-color: transparent;
-            touch-action: none; /* 极度关键：防止星系内部的滚动溢出到外层文件树 */
+            touch-action: none; 
         `);
 
-        // 4. 标题栏构造
         const headerDiv = this.injectedContainer.createDiv({ 
             attr: { style: 'display: flex; justify-content: space-between; align-items: center; padding: 12px 16px 4px 16px; flex-shrink: 0; opacity: 0.85;' } 
         });
@@ -485,17 +472,14 @@ export default class MobileStatsPlugin extends Plugin {
             attr: { style: 'margin: 0; font-size: 13px; font-weight: 600; color: var(--text-muted); font-family: "SimSun", "STSong", "Songti SC", serif; letter-spacing: 0.5px;' } 
         });
 
-        // 5. 核心画布容器
         const heatmapDiv = this.injectedContainer.createDiv({ 
             attr: { style: 'flex: 1; display: flex; justify-content: center; align-items: center; overflow: hidden; position: relative;' } 
         });
 
-        // 将寄生体强行插入到文件树容器的最后
         navContainer.appendChild(this.injectedContainer);
 
         titleText.innerText = "数据抓取中...";
         
-        // 6. 执行数据分析与渲染
         const heatmapWords = await analyzeVaultData(this.app);
         const maxWordCount = heatmapWords.length > 0 ? heatmapWords[0].value : 1;
 
@@ -507,7 +491,6 @@ export default class MobileStatsPlugin extends Plugin {
             const wordEl = document.createElement('div');
             wordEl.innerText = word;
             
-            // 手机端宋体参数调优
             const fontSize = Math.max(14, Math.min(26, 14 + (value/maxWordCount)*12));
             const fontWeight = value > maxWordCount * 0.6 ? '700' : '400'; 
             const filePaths = new Set(files.map(f => f.path));
@@ -524,7 +507,6 @@ export default class MobileStatsPlugin extends Plugin {
                 transform-origin: center center;
             `);
             
-            // 使用 touchstart 优先响应，防穿透
             wordEl.addEventListener('touchstart', (e) => {
                 e.stopPropagation();
             }, {passive: false});
@@ -534,7 +516,6 @@ export default class MobileStatsPlugin extends Plugin {
                 new WordContextModal(this.app, word, files).open();
             });
 
-            // 保留 click 以防兼容性
             wordEl.addEventListener('click', (e) => {
                 e.stopPropagation();
                 new WordContextModal(this.app, word, files).open();
