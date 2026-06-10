@@ -1,4 +1,4 @@
-import { App, Plugin, Modal, TFile, setIcon } from 'obsidian';
+import { App, Plugin, TFile } from 'obsidian';
 
 const STOP_WORDS = new Set([
     'the', 'and', 'for', 'that', 'this', 'with', 'from', 'https', 'com', 'org', 
@@ -13,17 +13,11 @@ const STOP_WORDS = new Set([
 interface SphereNode {
     el: HTMLElement;
     lx: number; ly: number; lz: number; 
-    rx: number; ry: number; rz: number; 
-    vx: number; vy: number; vz: number; 
-    currentScale: number;               
     zRatio: number;
-    baseFontSize: number;
-    baseWeight: string;
-    filePaths: Set<string>;
 }
 
-// --- 移动端触控物理引擎 ---
-class WordSphereMobileEngine {
+// --- 移动端专属：纯装饰级极简物理引擎 (零交互、纯匀速) ---
+class WordSphereDecorativeEngine {
     container: HTMLElement;
     canvas: HTMLCanvasElement;
     ctx: CanvasRenderingContext2D;
@@ -32,40 +26,13 @@ class WordSphereMobileEngine {
     height: number = 0;
     tags: SphereNode[] = [];
     
-    containerScale: number = 1; 
-
-    isDragging = false;
-    previousTouchX = 0; 
-    previousTouchY = 0;
-    
-    velocityX = 0.003; 
-    velocityY = 0.003;
-    targetMinSpeed = 0.002; 
-    friction = 0.95; 
+    // 自然匀速滚动
+    velocityX = 0.0025; 
+    velocityY = 0.0025;
 
     animationFrameId: number = 0;
     isActive = true;
     resizeObserver: any; 
-
-    private onTouchMove = (e: TouchEvent) => {
-        if (!this.isDragging) return;
-        e.stopPropagation(); 
-        
-        const touch = e.touches[0];
-        const deltaX = touch.clientX - this.previousTouchX;
-        const deltaY = touch.clientY - this.previousTouchY;
-        this.previousTouchX = touch.clientX;
-        this.previousTouchY = touch.clientY;
-        
-        this.velocityY = this.velocityY * 0.6 + (deltaX * 0.015) * 0.4; 
-        this.velocityX = this.velocityX * 0.6 + (-deltaY * 0.015) * 0.4; 
-    };
-
-    private onTouchEnd = () => {
-        if (this.isDragging) {
-            this.isDragging = false;
-        }
-    };
 
     constructor(container: HTMLElement, radius: number) {
         this.container = container;
@@ -77,8 +44,6 @@ class WordSphereMobileEngine {
         this.canvas.style.left = '0';
         this.canvas.style.width = '100%';
         this.canvas.style.height = '100%';
-        this.canvas.style.pointerEvents = 'none'; 
-        this.canvas.style.zIndex = '0';
         this.container.appendChild(this.canvas);
         
         const context = this.canvas.getContext('2d');
@@ -86,7 +51,6 @@ class WordSphereMobileEngine {
         this.ctx = context;
 
         this.handleResize();
-        this.setupTouchListeners();
 
         const RO = (window as any).ResizeObserver;
         if (RO) {
@@ -99,12 +63,11 @@ class WordSphereMobileEngine {
         const rect = this.container.getBoundingClientRect();
         if (rect.width === 0 || rect.height === 0) return;
         
-        const safeRadiusWidth = (rect.width / 2) - 15; 
-        const safeRadiusHeight = (rect.height / 2) - 15;
+        // 居中缩小：保证四周有充分留白
+        const safeRadiusWidth = (rect.width / 2) - 30; 
+        const safeRadiusHeight = (rect.height / 2) - 30;
         let newRadius = Math.min(safeRadiusWidth, safeRadiusHeight);
         newRadius = Math.max(newRadius, 40); 
-
-        this.containerScale = Math.max(0.5, Math.min(newRadius / 80, 1.2));
 
         if (this.radius > 0 && this.tags.length > 0 && this.radius !== newRadius) {
             const scaleFactor = newRadius / this.radius;
@@ -112,9 +75,6 @@ class WordSphereMobileEngine {
                 tag.lx *= scaleFactor;
                 tag.ly *= scaleFactor;
                 tag.lz *= scaleFactor;
-                tag.rx *= scaleFactor;
-                tag.ry *= scaleFactor;
-                tag.rz *= scaleFactor;
             });
         }
         
@@ -128,7 +88,7 @@ class WordSphereMobileEngine {
         this.height = rect.height;
     }
 
-    addTag(tagEl: HTMLElement, baseFontSize: number, baseWeight: string, filePaths: Set<string>) {
+    addTag(tagEl: HTMLElement) {
         tagEl.style.position = 'absolute';
         tagEl.style.left = '50%';
         tagEl.style.top = '50%';
@@ -136,11 +96,11 @@ class WordSphereMobileEngine {
         tagEl.style.zIndex = '10'; 
         
         const count = this.tags.length;
-        const offset = 2 / 50; 
+        const offset = 2 / 35; // 控制在 35 个词以内，防拥挤
         const increment = Math.PI * (3 - Math.sqrt(5));
         const y = ((count * offset) - 1) + (offset / 2);
         const r = Math.sqrt(1 - y * y);
-        const phi = (count % 50) * increment;
+        const phi = (count % 35) * increment;
         
         const x = Math.cos(phi) * r * this.radius;
         const cy = y * this.radius;
@@ -149,44 +109,10 @@ class WordSphereMobileEngine {
         this.tags.push({
             el: tagEl,
             lx: x, ly: cy, lz: z,
-            rx: x, ry: cy, rz: z, 
-            vx: 0, vy: 0, vz: 0,
-            currentScale: 1, 
             zRatio: z / this.radius,
-            baseFontSize,
-            baseWeight,
-            filePaths: filePaths
         });
         
         this.container.appendChild(tagEl);
-    }
-
-    private setupTouchListeners() {
-        this.container.addEventListener('touchstart', (e) => {
-            this.isDragging = true;
-            this.previousTouchX = e.touches[0].clientX;
-            this.previousTouchY = e.touches[0].clientY;
-            e.stopPropagation(); 
-        }, { passive: false }); 
-
-        this.container.addEventListener('touchmove', this.onTouchMove, { passive: false });
-        this.container.addEventListener('touchend', this.onTouchEnd);
-        
-        this.container.addEventListener('mousedown', (e) => {
-            this.isDragging = true;
-            this.previousTouchX = e.clientX;
-            this.previousTouchY = e.clientY;
-        });
-        document.addEventListener('mousemove', (e: MouseEvent) => {
-            if (!this.isDragging) return;
-            const deltaX = e.clientX - this.previousTouchX;
-            const deltaY = e.clientY - this.previousTouchY;
-            this.previousTouchX = e.clientX;
-            this.previousTouchY = e.clientY;
-            this.velocityY = this.velocityY * 0.6 + (deltaX * 0.012) * 0.4; 
-            this.velocityX = this.velocityX * 0.6 + (-deltaY * 0.012) * 0.4; 
-        });
-        document.addEventListener('mouseup', () => { this.isDragging = false; });
     }
 
     startAnimation() {
@@ -200,21 +126,6 @@ class WordSphereMobileEngine {
         const animate = () => {
             if (!this.isActive) return;
 
-            if (!this.isDragging) {
-                const speed = Math.sqrt(this.velocityX ** 2 + this.velocityY ** 2);
-                if (speed > this.targetMinSpeed) {
-                    this.velocityX *= this.friction; 
-                    this.velocityY *= this.friction;
-                } else if (speed > 0 && speed < this.targetMinSpeed) {
-                    const ratio = this.targetMinSpeed / speed;
-                    this.velocityX *= ratio;
-                    this.velocityY *= ratio;
-                } else if (speed === 0) {
-                    this.velocityX = this.targetMinSpeed;
-                    this.velocityY = this.targetMinSpeed;
-                }
-            }
-
             this.ctx.clearRect(0, 0, this.width, this.height);
             const cx = this.width / 2;
             const cy = this.height / 2;
@@ -222,55 +133,55 @@ class WordSphereMobileEngine {
             const colorNormal = getComputedColor('--text-normal', '#333333');
             const neutralLineColor = '128, 128, 128'; 
 
+            // 极简纯坐标旋转计算
             this.tags.forEach(tag => {
                 const x1 = tag.lx * Math.cos(this.velocityY) - tag.lz * Math.sin(this.velocityY);
                 const z1 = tag.lz * Math.cos(this.velocityY) + tag.lx * Math.sin(this.velocityY);
                 const y1 = tag.ly * Math.cos(this.velocityX) - z1 * Math.sin(this.velocityX);
                 const z2 = z1 * Math.cos(this.velocityX) + tag.ly * Math.sin(this.velocityX);
                 tag.lx = x1; tag.ly = y1; tag.lz = z2;
-                tag.rx = x1; tag.ry = y1; tag.rz = z2;
                 tag.zRatio = z2 / this.radius;
             });
 
-            const renderList = [...this.tags].sort((a, b) => a.rz - b.rz);
+            const renderList = [...this.tags].sort((a, b) => a.lz - b.lz);
 
             renderList.forEach(item => {
-                if (item.rz >= 0) return;
+                if (item.lz >= 0) return;
                 this.drawConnectionLine(cx, cy, item, neutralLineColor);
             });
 
             this.ctx.beginPath();
-            this.ctx.arc(cx, cy, Math.max(1.5, 2.5 * this.containerScale), 0, Math.PI * 2); 
+            this.ctx.arc(cx, cy, 2, 0, Math.PI * 2); 
             this.ctx.fillStyle = colorNormal;
             this.ctx.fill();
 
             renderList.forEach(item => {
-                if (item.rz < 0) return;
+                if (item.lz < 0) return;
                 this.drawConnectionLine(cx, cy, item, neutralLineColor);
             });
 
             renderList.forEach(item => {
                 const tag = item;
-                
                 let baseOpacity = 0; let blur = 0; let color = 'var(--text-faint)';
+                
+                // 光学景深
                 if (item.zRatio > 0.4) {
-                    baseOpacity = 0.95; blur = 0; color = 'var(--text-normal)'; 
+                    baseOpacity = 0.9; blur = 0; color = 'var(--text-normal)'; 
                 } else if (item.zRatio > 0) {
-                    baseOpacity = 0.5 + 0.45 * (item.zRatio / 0.4); blur = 0; color = 'var(--text-muted)'; 
+                    baseOpacity = 0.4 + 0.5 * (item.zRatio / 0.4); blur = 0; color = 'var(--text-muted)'; 
                 } else {
-                    baseOpacity = 0.15 + 0.35 * ((item.zRatio + 1) / 1); 
+                    baseOpacity = 0.1 + 0.3 * ((item.zRatio + 1) / 1); 
                     blur = Math.min(2.0, Math.abs(item.zRatio) * 2.0); color = 'var(--text-faint)';
                 }
 
-                const depthScale = 0.65 + 0.5 * ((this.radius + tag.rz) / (2 * this.radius)); 
-                const finalScale = depthScale * tag.currentScale * this.containerScale; 
-
-                const baseTransform = `translate(-50%, -50%) translate3d(${tag.rx}px, ${tag.ry}px, 0px)`;
-                tag.el.style.transform = `${baseTransform} scale(${finalScale})`;
+                const depthScale = 0.6 + 0.5 * ((this.radius + tag.lz) / (2 * this.radius)); 
+                const baseTransform = `translate(-50%, -50%) translate3d(${tag.lx}px, ${tag.ly}px, 0px)`;
+                
+                tag.el.style.transform = `${baseTransform} scale(${depthScale})`;
                 tag.el.style.opacity = baseOpacity.toString();
                 tag.el.style.color = color;
                 tag.el.style.filter = `blur(${blur}px)`;
-                tag.el.style.zIndex = Math.round(tag.rz + this.radius).toString();
+                tag.el.style.zIndex = Math.round(tag.lz + this.radius).toString();
             });
 
             this.animationFrameId = window.requestAnimationFrame(animate);
@@ -281,25 +192,23 @@ class WordSphereMobileEngine {
 
     private drawConnectionLine(cx: number, cy: number, item: SphereNode, neutralRGB: string) {
         let depthOpacity = 0;
-        let depthWidth = 0.4;
+        let depthWidth = 0.3;
         
         if (item.zRatio > 0) {
-            depthOpacity = 0.06 + 0.15 * item.zRatio; 
-            depthWidth = 0.4 + 0.5 * item.zRatio;
+            depthOpacity = 0.05 + 0.12 * item.zRatio; 
+            depthWidth = 0.3 + 0.3 * item.zRatio;
         } else {
-            depthOpacity = 0.06 * (1 - Math.abs(item.zRatio)); 
-            depthWidth = 0.4;
+            depthOpacity = 0.05 * (1 - Math.abs(item.zRatio)); 
+            depthWidth = 0.3;
         }
-
-        depthWidth *= this.containerScale;
 
         if (depthOpacity <= 0) return;
 
         this.ctx.save();
         this.ctx.beginPath();
         this.ctx.moveTo(cx, cy);
-        this.ctx.lineTo(cx + item.rx, cy + item.ry);
-        this.ctx.lineWidth = Math.max(0.2, depthWidth);
+        this.ctx.lineTo(cx + item.lx, cy + item.ly);
+        this.ctx.lineWidth = Math.max(0.1, depthWidth);
         this.ctx.strokeStyle = `rgba(${neutralRGB}, ${depthOpacity})`;
         this.ctx.stroke();
         this.ctx.restore();
@@ -312,103 +221,62 @@ class WordSphereMobileEngine {
     }
 }
 
-async function analyzeVaultData(app: App) {
+// --- 移动端随机装饰词汇提取 (过滤代码，专注文章质感) ---
+async function analyzeDecorativeData(app: App) {
     const files = app.vault.getMarkdownFiles();
-    const wordData = new Map<string, { count: number, files: Set<TFile> }>();
+    // 打乱文件列表，随机选取 10 篇作为语料池
+    const sampleFiles = files.sort(() => 0.5 - Math.random()).slice(0, 10);
+    const wordsPool = new Set<string>();
+    const results = [];
 
-    for (const file of files) {
+    for (const file of sampleFiles) {
         const content = await app.vault.cachedRead(file);
+        // 暴力清洗所有代码块、URL、特殊符号
         const cleanText = content
             .replace(/```[\s\S]*?```/g, ' ') 
             .replace(/---[\s\S]*?---/, ' ')  
             .replace(/<[^>]*>?/gm, ' ')      
             .replace(/https?:\/\/[^\s]+/g, ' ') 
             .replace(/[-a-zA-Z0-9@:%._\+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}\b([-a-zA-Z0-9()@:%_\+.~#?&//=]*)/g, ' ') 
-            .replace(/[0-9a-fA-F]{8,}/g, ' ') 
-            .replace(/[^\u4e00-\u9fa5a-zA-Z]/g, ' '); 
+            .replace(/[0-9a-fA-F]{8,}/g, ' '); 
 
         let segments: any[] = [];
         const IntlAny = (window as any).Intl;
         if (IntlAny && IntlAny.Segmenter) {
             const segmenter = new IntlAny.Segmenter('zh-CN', { granularity: 'word' });
-            const iterator = segmenter.segment(cleanText);
-            segments = (Array as any).from(iterator);
+            segments = (Array as any).from(segmenter.segment(cleanText));
         } else {
-            const fallbackWords = cleanText.match(/[\u4e00-\u9fa5]{2,}|\b[a-zA-Z]{3,}\b/g) || [];
+            const fallbackWords = cleanText.match(/[\u4e00-\u9fa5]{2,}|\b[a-zA-Z]{4,}\b/g) || [];
             segments = fallbackWords.map((w: string) => ({ segment: w, isWordLike: true }));
         }
 
         for (const { segment, isWordLike } of segments) {
             if (!isWordLike) continue; 
-            const w = segment.toLowerCase().trim();
-            if (STOP_WORDS.has(w)) continue;
+            const w = segment.trim();
+            if (w.length < 2) continue;
+            if (STOP_WORDS.has(w.toLowerCase())) continue;
 
-            const isChinese = /[\u4e00-\u9fa5]/.test(w);
-            if ((isChinese && w.length >= 2) || (!isChinese && w.length >= 3 && w.length <= 20)) {
-                if (!wordData.has(w)) {
-                    wordData.set(w, { count: 0, files: new Set() });
-                }
-                const entry = wordData.get(w)!;
-                entry.count++;
-                entry.files.add(file);
+            // 核心过滤：剔除全是小写字母的词 (通常是代码变量如 json, github, api)
+            // 只保留中文，或者包含大写字母的专业名词
+            if (/^[a-z]+$/.test(w)) continue; 
+
+            if (!wordsPool.has(w)) {
+                wordsPool.add(w);
+                results.push({
+                    word: w,
+                    // 为装饰球赋予 1~10 的随机权重，制造错落有致的字号排版
+                    value: Math.floor(Math.random() * 10) + 1 
+                });
             }
         }
     }
 
-    return Array.from(wordData.entries())
-                .sort((a, b) => b[1].count - a[1].count)
-                .slice(0, 45) 
-                .map(([word, data]) => ({ word, value: data.count, files: Array.from(data.files) }));
-}
-
-class WordContextModal extends Modal {
-    word: string; files: TFile[];
-    constructor(app: App, word: string, files: TFile[]) { super(app); this.word = word; this.files = files; }
-
-    async onOpen() {
-        const { contentEl } = this; contentEl.empty();
-        this.modalEl.style.cssText = 'max-width: 95vw; width: 95vw; border-radius: 16px; padding: 24px; box-shadow: 0 16px 40px rgba(0,0,0,0.08);';
-
-        contentEl.createEl('h2', { text: `「${this.word}」`, attr: { style: 'margin: 0 0 10px 0; font-size: 1.5em; font-weight: 700; color: var(--interactive-accent); font-family: "SimSun", "STSong", "Songti SC", serif; letter-spacing: -0.5px;' } });
-        contentEl.createEl('p', { text: `在 ${this.files.length} 篇笔记中被提及：`, attr: { style: 'margin: 0 0 20px 0; color: var(--text-muted); font-size: 0.9em;' } });
-
-        const listContainer = contentEl.createDiv({ attr: { style: 'max-height: 60vh; overflow-y: auto; padding-right: 8px; display: flex; flex-direction: column; gap: 12px;' } });
-
-        this.files.forEach(async (file) => {
-            const content = await this.app.vault.cachedRead(file);
-            const rawContent = content.replace(/\s+/g, ' '); 
-            const safeWord = this.word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); 
-            const regex = new RegExp(`.{0,45}${safeWord}.{0,45}`, 'gi');
-            const matches = rawContent.match(regex) || [];
-
-            if (matches.length > 0) { // 彻底修复了这里的语法错误！
-                const card = listContainer.createDiv({ attr: { style: 'background: var(--background-primary); border: 1px solid var(--background-modifier-border); border-radius: 10px; padding: 14px; transition: all 0.2s ease;' } });
-                card.addEventListener('click', async () => { const leaf = this.app.workspace.getLeaf(false); await leaf.openFile(file); this.close(); });
-
-                const fileTitle = card.createEl('div', { attr: { style: 'font-weight: 700; font-size: 1em; margin-bottom: 10px; color: var(--text-normal); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; display: flex; align-items: center;' } });
-                const fileIconSpan = fileTitle.createEl('span', { attr: { style: 'margin-right: 6px; opacity: 0.7;' } });
-                setIcon(fileIconSpan, 'document'); fileTitle.appendChild(document.createTextNode(file.basename));
-
-                const displayMatches = matches.slice(0, 2); 
-                for (let match of displayMatches) {
-                    const snippetDiv = card.createDiv({ attr: { style: 'font-size: 0.85em; color: var(--text-muted); line-height: 1.5; margin-bottom: 6px; background: var(--background-secondary); padding: 8px 10px; border-radius: 6px;' } });
-                    const parts = match.split(new RegExp(`(${safeWord})`, 'gi'));
-                    snippetDiv.appendChild(document.createTextNode('"...'));
-                    parts.forEach(part => {
-                        if (part.toLowerCase() === this.word.toLowerCase()) {
-                            snippetDiv.createEl('span', { text: part, attr: { style: 'color: var(--text-normal); background-color: var(--background-modifier-hover); padding: 2px 4px; border-radius: 4px; font-weight: 600; margin: 0 2px;' } });
-                        } else { snippetDiv.appendChild(document.createTextNode(part)); }
-                    });
-                    snippetDiv.appendChild(document.createTextNode('..."'));
-                }
-            }
-        });
-    }
-    onClose() { this.contentEl.empty(); }
+    // 随机打乱并只取 30 个词汇，保证球体空灵不拥挤
+    return results.sort(() => 0.5 - Math.random()).slice(0, 30);
 }
 
 export default class MobileStatsPlugin extends Plugin {
-    sphereEngine: WordSphereMobileEngine | null = null;
+    sphereEngine: WordSphereDecorativeEngine | null = null;
     injectedContainer: HTMLElement | null = null;
 
     async onload() {
@@ -419,8 +287,6 @@ export default class MobileStatsPlugin extends Plugin {
         this.registerEvent(this.app.workspace.on('layout-change', () => {
             this.injectIntoFileExplorer();
         }));
-        
-        this.addCommand({ id: 'rebuild-mobile-insights', name: '重构文件树拓扑网络', callback: () => this.injectIntoFileExplorer(true) });
     }
     
     async onunload() { 
@@ -428,16 +294,15 @@ export default class MobileStatsPlugin extends Plugin {
         if (this.injectedContainer) this.injectedContainer.remove();
     }
     
-    async injectIntoFileExplorer(forceRebuild = false) {
+    async injectIntoFileExplorer() {
         const fileExplorerLeaves = this.app.workspace.getLeavesOfType('file-explorer');
         if (fileExplorerLeaves.length === 0) return; 
 
         const fileExplorerContainer = fileExplorerLeaves[0].view.containerEl;
-        
         const navContainer = fileExplorerContainer.querySelector('.nav-files-container');
         if (!navContainer) return;
 
-        if (this.injectedContainer && this.injectedContainer.parentElement === navContainer && !forceRebuild) {
+        if (this.injectedContainer && this.injectedContainer.parentElement === navContainer) {
             return;
         }
 
@@ -447,84 +312,56 @@ export default class MobileStatsPlugin extends Plugin {
         this.injectedContainer = document.createElement('div');
         this.injectedContainer.className = 'mobile-parasitic-heatmap';
         
+        // 核心 UI 重构：移除头部文字和图标，彻底变为纯装饰容器
+        // 高度减小，上下 margin 留白居中，最重要的是 pointer-events: none (手指完全穿透！)
         this.injectedContainer.setAttribute('style', `
             width: 100%;
-            height: 280px; 
-            margin-top: 10px;
+            height: 240px; 
+            margin-top: 15px;
+            margin-bottom: 20px;
             display: flex;
-            flex-direction: column;
-            border-top: 1px solid var(--background-modifier-border);
+            justify-content: center;
+            align-items: center;
             position: relative;
             background-color: transparent;
-            touch-action: none; 
+            pointer-events: none; /* 事件穿透，彻底解决滚动冲突 */
         `);
 
-        const headerDiv = this.injectedContainer.createDiv({ 
-            attr: { style: 'display: flex; justify-content: space-between; align-items: center; padding: 12px 16px 4px 16px; flex-shrink: 0; opacity: 0.85;' } 
-        });
-        
-        const titleDiv = headerDiv.createDiv({ attr: { style: 'display: flex; align-items: center; white-space: nowrap;' } });
-        const iconSpan = titleDiv.createEl('span', { attr: { style: 'width: 16px; height: 16px; color: var(--text-muted); margin-right: 8px; display: flex; align-items: center;' } });
-        setIcon(iconSpan, 'network'); 
-        
-        const titleText = titleDiv.createEl("span", { 
-            text: "知识拓扑网络", 
-            attr: { style: 'margin: 0; font-size: 13px; font-weight: 600; color: var(--text-muted); font-family: "SimSun", "STSong", "Songti SC", serif; letter-spacing: 0.5px;' } 
-        });
-
+        // 画布容器
         const heatmapDiv = this.injectedContainer.createDiv({ 
-            attr: { style: 'flex: 1; display: flex; justify-content: center; align-items: center; overflow: hidden; position: relative;' } 
+            attr: { style: 'width: 100%; height: 100%; display: flex; justify-content: center; align-items: center; overflow: hidden; position: relative;' } 
         });
 
         navContainer.appendChild(this.injectedContainer);
-
-        titleText.innerText = "数据抓取中...";
         
-        const heatmapWords = await analyzeVaultData(this.app);
-        const maxWordCount = heatmapWords.length > 0 ? heatmapWords[0].value : 1;
+        const heatmapWords = await analyzeDecorativeData(this.app);
 
-        const baseRadius = Math.max((heatmapDiv.clientWidth / 2) * 0.8, 60); 
+        // 动态半径稍微缩小，居中更美观
+        const baseRadius = Math.max((heatmapDiv.clientWidth / 2) * 0.7, 45); 
 
-        this.sphereEngine = new WordSphereMobileEngine(heatmapDiv, baseRadius);
+        this.sphereEngine = new WordSphereDecorativeEngine(heatmapDiv, baseRadius);
 
-        heatmapWords.forEach(({word, value, files}) => {
+        heatmapWords.forEach(({word, value}) => {
             const wordEl = document.createElement('div');
             wordEl.innerText = word;
             
-            const fontSize = Math.max(14, Math.min(26, 14 + (value/maxWordCount)*12));
-            const fontWeight = value > maxWordCount * 0.6 ? '700' : '400'; 
-            const filePaths = new Set(files.map(f => f.path));
+            // 手机端字号调小，错落排布
+            const fontSize = Math.max(13, Math.min(24, 13 + (value/10)*11));
+            const fontWeight = value > 6 ? '700' : '400'; 
 
             wordEl.setAttr("style", `
                 font-family: "SimSun", "STSong", "Songti SC", serif;
                 font-size: ${fontSize}px;
                 font-weight: ${fontWeight};
-                letter-spacing: -0.2px;
-                padding: 4px;
+                letter-spacing: 0.5px;
                 white-space: nowrap;
                 user-select: none;
-                transition: filter 0.2s, opacity 0.2s, color 0.2s; 
                 transform-origin: center center;
             `);
             
-            wordEl.addEventListener('touchstart', (e) => {
-                e.stopPropagation();
-            }, {passive: false});
-            
-            wordEl.addEventListener('touchend', (e) => {
-                e.stopPropagation();
-                new WordContextModal(this.app, word, files).open();
-            });
-
-            wordEl.addEventListener('click', (e) => {
-                e.stopPropagation();
-                new WordContextModal(this.app, word, files).open();
-            });
-            
-            this.sphereEngine!.addTag(wordEl, fontSize, fontWeight, filePaths);
+            this.sphereEngine!.addTag(wordEl);
         });
 
         this.sphereEngine.startAnimation();
-        titleText.innerText = "知识拓扑网络";
     }
 }
