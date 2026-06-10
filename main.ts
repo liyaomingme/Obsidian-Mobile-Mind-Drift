@@ -1,14 +1,10 @@
 import { App, Plugin, TFile } from 'obsidian';
 
 const STOP_WORDS = new Set([
-    'the', 'and', 'for', 'that', 'this', 'with', 'from', 'https', 'com', 'org', 
-    'www', 'are', 'can', 'not', 'you', 'your', 'have', 'was', 'but', 'all', 
-    'what', 'http', 'html', 'file', 'png', 'jpg', 'out', 'has', 'will', 'use',
-    'which', 'when', 'more', 'about', 'their', 'there', 'some', '因此', '通过',
-    '可以', '一个', '没有', '我们', '什么', '这个', '如果是', '怎么', '如果',
-    '可以说', '这样', '很多', '非常', '进行', '然后', '可能', '因为', '所以',
-    '各位', '谢谢', '由于', '其实', '只要', '目前', '开始', '自己', '就是',
-    '需要', '问题', '产生', '使用'
+    '因此', '通过', '可以', '一个', '没有', '我们', '什么', '这个', '如果是', 
+    '怎么', '如果', '可以说', '这样', '很多', '非常', '进行', '然后', '可能', 
+    '因为', '所以', '各位', '谢谢', '由于', '其实', '只要', '目前', '开始', 
+    '自己', '就是', '需要', '问题', '产生', '使用', '发现', '这种', '那些'
 ]);
 
 interface SphereNode {
@@ -28,8 +24,8 @@ class WordSphereDecorativeEngine {
     tags: SphereNode[] = [];
     
     // 自然匀速滚动
-    velocityX = 0.0025; 
-    velocityY = 0.0025;
+    velocityX = 0.002; 
+    velocityY = 0.002;
 
     animationFrameId: number = 0;
     isActive = true;
@@ -104,7 +100,7 @@ class WordSphereDecorativeEngine {
         this.container.appendChild(tagEl);
     }
 
-    // 核心修复：根据实际存在的词汇数量，重新计算斐波那契坐标，保证绝对居中均匀分布
+    // 根据实际提取的词汇量，动态分配斐波那契坐标，绝对居中饱满
     initPositions() {
         const total = this.tags.length;
         if (total === 0) return;
@@ -127,7 +123,6 @@ class WordSphereDecorativeEngine {
     startAnimation() {
         if (this.tags.length === 0) return;
         
-        // 启动动画前，必须先初始化阵列坐标
         this.initPositions();
 
         const getComputedColor = (cssVar: string, fallback: string) => {
@@ -145,7 +140,6 @@ class WordSphereDecorativeEngine {
             const colorNormal = getComputedColor('--text-normal', '#333333');
             const neutralLineColor = '128, 128, 128'; 
 
-            // 极简纯坐标旋转计算
             this.tags.forEach(tag => {
                 const x1 = tag.lx * Math.cos(this.velocityY) - tag.lz * Math.sin(this.velocityY);
                 const z1 = tag.lz * Math.cos(this.velocityY) + tag.lx * Math.sin(this.velocityY);
@@ -176,7 +170,6 @@ class WordSphereDecorativeEngine {
                 const tag = item;
                 let baseOpacity = 0; let blur = 0; let color = 'var(--text-faint)';
                 
-                // 光学景深
                 if (item.zRatio > 0.4) {
                     baseOpacity = 0.9; blur = 0; color = 'var(--text-normal)'; 
                 } else if (item.zRatio > 0) {
@@ -233,21 +226,21 @@ class WordSphereDecorativeEngine {
     }
 }
 
-// --- 移动端纯正中文词汇提纯 ---
+// --- 移动端安全内存：纯正中文词汇随机抽样提纯 ---
 async function analyzeDecorativeData(app: App) {
     const files = app.vault.getMarkdownFiles();
+    // 防卡顿：随机抽取 15 篇内容进行解析，而不是全库
+    const sampleFiles = files.sort(() => 0.5 - Math.random()).slice(0, 15);
     const wordData = new Map<string, number>();
 
-    for (const file of files) {
+    for (const file of sampleFiles) {
         const content = await app.vault.cachedRead(file);
-        // 暴力清洗所有代码块、URL、特殊符号
         const cleanText = content
             .replace(/```[\s\S]*?```/g, ' ') 
             .replace(/---[\s\S]*?---/, ' ')  
             .replace(/<[^>]*>?/gm, ' ')      
             .replace(/https?:\/\/[^\s]+/g, ' ') 
-            .replace(/[-a-zA-Z0-9@:%._\+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}\b([-a-zA-Z0-9()@:%_\+.~#?&//=]*)/g, ' ') 
-            .replace(/[0-9a-fA-F]{8,}/g, ' '); 
+            .replace(/[0-9a-zA-Z]/g, ' '); // 极其严格：粗暴移除所有英文和数字！
 
         let segments: any[] = [];
         const IntlAny = (window as any).Intl;
@@ -255,7 +248,7 @@ async function analyzeDecorativeData(app: App) {
             const segmenter = new IntlAny.Segmenter('zh-CN', { granularity: 'word' });
             segments = (Array as any).from(segmenter.segment(cleanText));
         } else {
-            const fallbackWords = cleanText.match(/[\u4e00-\u9fa5]{2,}|\b[a-zA-Z]{4,}\b/g) || [];
+            const fallbackWords = cleanText.match(/[\u4e00-\u9fa5]{2,}/g) || [];
             segments = fallbackWords.map((w: string) => ({ segment: w, isWordLike: true }));
         }
 
@@ -263,39 +256,46 @@ async function analyzeDecorativeData(app: App) {
             if (!isWordLike) continue; 
             const w = segment.trim();
             
-            // 核心过滤规则：长度至少为 2，并且必须包含中文！彻底封杀纯英文、代码和数字
-            if (w.length < 2) continue;
-            if (STOP_WORDS.has(w.toLowerCase())) continue;
-            if (!/[\u4e00-\u9fa5]/.test(w)) continue; 
+            // 核心过滤：长度至少 2 的纯中文
+            if (w.length < 2 || w.length > 6) continue;
+            if (STOP_WORDS.has(w)) continue;
+            if (!/^[\u4e00-\u9fa5]+$/.test(w)) continue; 
 
             wordData.set(w, (wordData.get(w) || 0) + 1);
         }
     }
 
-    // 提取频率最高的 45 个词汇，确保星系饱满
+    // 提取频率最高的 40 个纯正中文词汇
     return Array.from(wordData.entries())
         .sort((a, b) => b[1] - a[1])
-        .slice(0, 45)
+        .slice(0, 40)
         .map(([word, value]) => ({ word, value }));
 }
 
 export default class MobileStatsPlugin extends Plugin {
     sphereEngine: WordSphereDecorativeEngine | null = null;
     injectedContainer: HTMLElement | null = null;
+    
+    // 全局内存缓存：防止每次侧边栏刷新都去算数据
+    cachedWords: {word: string, value: number}[] | null = null;
 
     async onload() {
-        this.app.workspace.onLayoutReady(() => {
+        this.app.workspace.onLayoutReady(async () => {
+            // 启动时静默抓取一次数据并缓存
+            this.cachedWords = await analyzeDecorativeData(this.app);
             this.injectIntoFileExplorer();
+            
+            // 核心心跳自愈：每隔 1.5 秒检查一次，如果被 Obsidian 回收了就瞬间补回去
+            this.registerInterval(window.setInterval(() => {
+                this.injectIntoFileExplorer();
+            }, 1500));
         });
-
-        this.registerEvent(this.app.workspace.on('layout-change', () => {
-            this.injectIntoFileExplorer();
-        }));
     }
     
     async onunload() { 
         if (this.sphereEngine) this.sphereEngine.destroy();
         if (this.injectedContainer) this.injectedContainer.remove();
+        this.cachedWords = null;
     }
     
     async injectIntoFileExplorer() {
@@ -306,21 +306,21 @@ export default class MobileStatsPlugin extends Plugin {
         const navContainer = fileExplorerContainer.querySelector('.nav-files-container');
         if (!navContainer) return;
 
-        if (this.injectedContainer && this.injectedContainer.parentElement === navContainer) {
+        // 如果寄生体还安好地待在 DOM 树里，什么都不做，直接返回
+        if (this.injectedContainer && document.body.contains(this.injectedContainer)) {
             return;
         }
 
+        // 被系统回收了，重新构建注入
         if (this.sphereEngine) this.sphereEngine.destroy();
-        if (this.injectedContainer) this.injectedContainer.remove();
 
         this.injectedContainer = document.createElement('div');
         this.injectedContainer.className = 'mobile-parasitic-heatmap';
         
-        // 容器高度调整为 260px 给饱满的星系腾出空间
         this.injectedContainer.setAttribute('style', `
             width: 100%;
-            height: 260px; 
-            margin-top: 15px;
+            height: 250px; 
+            margin-top: 10px;
             margin-bottom: 20px;
             display: flex;
             justify-content: center;
@@ -336,12 +336,13 @@ export default class MobileStatsPlugin extends Plugin {
 
         navContainer.appendChild(this.injectedContainer);
         
-        const heatmapWords = await analyzeDecorativeData(this.app);
+        // 直接使用缓存数据，无需重新卡顿读取
+        const heatmapWords = this.cachedWords || [];
         
         if (heatmapWords.length === 0) return;
 
         const maxWordCount = heatmapWords[0].value;
-        const baseRadius = Math.max((heatmapDiv.clientWidth / 2) * 0.75, 55); 
+        const baseRadius = Math.max((heatmapDiv.clientWidth / 2) * 0.70, 50); 
 
         this.sphereEngine = new WordSphereDecorativeEngine(heatmapDiv, baseRadius);
 
@@ -349,9 +350,8 @@ export default class MobileStatsPlugin extends Plugin {
             const wordEl = document.createElement('div');
             wordEl.innerText = word;
             
-            // 字体大小按照频率动态分配，制造视觉层次
             const fontSize = Math.max(12, Math.min(22, 12 + (value/maxWordCount)*10));
-            const fontWeight = value > maxWordCount * 0.6 ? '700' : '400'; 
+            const fontWeight = value > maxWordCount * 0.5 ? '700' : '400'; 
 
             wordEl.setAttr("style", `
                 font-family: "SimSun", "STSong", "Songti SC", serif;
